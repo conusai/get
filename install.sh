@@ -359,6 +359,14 @@ tildify() {
 
 success "conusai was installed successfully to $Bold_Green$(tildify "$exe")"
 
+# Root installs (fresh VPS, remote anchor bootstrap) also get the binary on a
+# standard PATH — non-interactive SSH never sources ~/.bashrc, so ~/.conusai/bin
+# alone leaves later `ssh host conusai …` phases with exit 127.
+if [[ $(id -u) -eq 0 ]]; then
+    install -m 755 "$exe" /usr/local/bin/conusai
+    info "Also installed to /usr/local/bin/conusai (system PATH)."
+fi
+
 if command -v conusai >/dev/null; then
     echo "Run 'conusai --help' to get started"
     exit
