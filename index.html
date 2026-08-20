@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConusAI Cloud — Install</title>
+<meta name="description" content="Deploy, observe, and scale from a single binary. Install ConusAI Cloud on your own server in minutes — public server (Mode A) or private origin behind an anchor (Mode B).">
+<style>
+  :root{--bg:#0a0f0e;--panel:#101817;--line:#1e2a28;--text:#e8f0ee;--dim:#9ab3ae;--teal:#80cdc6;--teal-dk:#57b3aa;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px;margin:0 auto;padding:0 24px}
+  header{padding:26px 0;display:flex;align-items:center;justify-content:space-between}
+  .logo{font-weight:800;font-size:20px;letter-spacing:-.02em}
+  .logo span{color:var(--teal)}
+  header a{color:var(--dim);text-decoration:none;font-size:14px;margin-left:20px}
+  header a:hover{color:var(--text)}
+  .hero{text-align:center;padding:64px 0 40px}
+  h1{font-size:clamp(30px,5.4vw,50px);line-height:1.12;letter-spacing:-.03em;font-weight:800}
+  h1 em{color:var(--teal);font-style:normal}
+  .sub{color:var(--dim);max-width:620px;margin:18px auto 0;font-size:18px}
+  .cmd{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:34px auto 10px;max-width:640px;font:15px/1 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-x:auto}
+  .cmd .p{color:var(--teal)}
+  .cmd button{margin-left:auto;background:var(--teal);color:#06302b;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:13px}
+  .cmd button:hover{background:var(--teal-dk)}
+  .note{color:var(--dim);font-size:13px}
+  .modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin:56px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px}
+  .card h2{font-size:18px;margin-bottom:4px}
+  .card .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--teal);border:1px solid var(--teal);border-radius:99px;padding:2px 10px;margin-bottom:12px}
+  .card p{color:var(--dim);font-size:15px}
+  .card code{font:13px ui-monospace,Menlo,monospace;color:var(--teal);background:#0c1413;border-radius:6px;padding:2px 6px}
+  .feats{margin:12px 0 64px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px 26px;color:var(--dim);font-size:15px;list-style:none}
+  .feats li::before{content:"◆ ";color:var(--teal);font-size:11px}
+  h3.sect{font-size:14px;letter-spacing:.12em;color:var(--teal);text-transform:uppercase;margin:56px 0 18px;text-align:center}
+  .steps{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px;margin-bottom:64px;font-size:15px}
+  .steps ol{margin-left:20px;color:var(--dim)}
+  .steps li{margin:8px 0}
+  .steps b{color:var(--text)}
+  footer{border-top:1px solid var(--line);padding:28px 0 44px;color:var(--dim);font-size:13px;display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:space-between}
+  footer a{color:var(--dim)}
+  @media (max-width:560px){.cmd{flex-wrap:wrap}.cmd button{margin-left:0}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">Conus<span>AI</span> Cloud</div>
+  <nav>
+    <a href="https://www.conusai.com">Website</a>
+    <a href="https://github.com/conusai/get/releases">Releases</a>
+  </nav>
+</header>
+
+<section class="hero">
+  <h1>Deploy, observe, and scale<br>from a <em>single binary</em>.</h1>
+  <p class="sub">Git deploys, managed databases, analytics, error tracking, tracing,
+  and uptime monitoring — self-hosted on your server. Your data never leaves your machine.</p>
+
+  <div class="cmd" id="cmd">
+    <span><span class="p">$</span> curl -sSL https://get.conusai.com/install.sh | sh</span>
+    <button onclick="navigator.clipboard.writeText('curl -sSL https://get.conusai.com/install.sh | sh');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)">Copy</button>
+  </div>
+  <p class="note">Linux x86_64 · Ubuntu 24.04 / 22.04 tested · Docker required · checksum-verified download</p>
+</section>
+
+<h3 class="sect">Two ways to run it</h3>
+<div class="modes">
+  <div class="card">
+    <span class="tag">MODE A</span>
+    <h2>Public server</h2>
+    <p>The classic. Install on any VPS or dedicated server with a public IP.
+    ConusAI terminates TLS on :443 (automatic Let's Encrypt), and everything —
+    dashboard, apps, databases — runs on that machine.</p>
+    <p style="margin-top:10px">Non-interactive: <code>CONUSAI_MODE=a</code></p>
+  </div>
+  <div class="card">
+    <span class="tag">MODE B</span>
+    <h2>Private origin + anchor</h2>
+    <p>Your real server never touches the public internet — a homelab, an office
+    box, an on-prem machine. A tiny ConusAI <b>anchor</b> on any cheap VPS forwards
+    traffic over WireGuard. TLS still terminates <em>on your origin</em>; real
+    client IPs are preserved end-to-end. The setup wizard pairs both sides.</p>
+    <p style="margin-top:10px">Non-interactive: <code>CONUSAI_MODE=b</code></p>
+  </div>
+</div>
+
+<h3 class="sect">What you get</h3>
+<ul class="feats">
+  <li>Git push → build → zero-downtime deploy</li>
+  <li>Preview deployments &amp; rollbacks</li>
+  <li>Managed Postgres (HA), Redis, MongoDB, S3</li>
+  <li>Point-in-time recovery &amp; scheduled backups</li>
+  <li>Web analytics, funnels, session replay</li>
+  <li>Sentry-compatible error tracking</li>
+  <li>OpenTelemetry traces, metrics, logs</li>
+  <li>Uptime monitors &amp; status pages</li>
+  <li>Automatic TLS (HTTP-01 / DNS-01)</li>
+  <li>Organizations, workspaces, fine-grained RBAC</li>
+  <li>SSO / OIDC, audit logs</li>
+  <li>AI gateway &amp; agent sandboxes</li>
+</ul>
+
+<h3 class="sect">What the installer does</h3>
+<div class="steps">
+  <ol>
+    <li>Checks the platform (Linux x86_64) and warns if <b>Docker</b> is missing.</li>
+    <li>Downloads the latest signed release and <b>verifies its SHA-256 checksum</b>
+        (and minisign signature when available — set <code style="color:var(--teal)">CONUSAI_INSTALL_REQUIRE_SIG=1</code> to make it mandatory).</li>
+    <li>Installs <b>conusai</b> to <code style="color:var(--teal)">/usr/local/bin</code>.</li>
+    <li>Launches <b>conusai setup</b> — the wizard that asks <b>Mode A or Mode B</b>,
+        creates your admin account, and brings the platform up.</li>
+  </ol>
+</div>
+
+<footer>
+  <span>© 2026 Conus AI, UAB — Vilnius, EU 🇪🇺</span>
+  <span>
+    <a href="https://www.conusai.com">conusai.com</a> ·
+    <a href="https://github.com/conusai/get/releases">releases</a> ·
+    <a href="https://github.com/conusai/get/blob/main/install.sh">read install.sh</a>
+  </span>
+</footer>
+
+</div>
+</body>
+</html>
