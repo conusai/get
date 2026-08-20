@@ -108,11 +108,13 @@
 <h3 class="sect">What the installer does</h3>
 <div class="steps">
   <ol>
-    <li>Checks the platform (Linux x86_64) and warns if <b>Docker</b> is missing.</li>
+    <li>Checks the platform (Linux x86_64), free RAM/disk, and ports 80/443.</li>
     <li>Downloads the latest signed release and <b>verifies its SHA-256 checksum</b>
         (and minisign signature when available — set <code style="color:var(--teal)">CONUSAI_INSTALL_REQUIRE_SIG=1</code> to make it mandatory).</li>
-    <li>Installs <b>conusai</b> to <code style="color:var(--teal)">/usr/local/bin</code>.</li>
-    <li>Launches <b>conusai setup --interactive</b> — the wizard that asks <b>Mode A or Mode B</b>, creates your admin account, and brings the platform up. (No TTY? It prints the recipe and exits cleanly.)</li>
+    <li>Installs the <b>conusai</b> binary, and <b>installs Docker</b> automatically if it's missing.</li>
+    <li>Provisions a local <b>PostgreSQL (TimescaleDB)</b> container — loopback-only, generated credentials stored 0600.</li>
+    <li>Launches <b>conusai setup --interactive</b> — the wizard that asks <b>Mode A or Mode B</b> and creates your admin account. (No TTY? It prints the recipe and exits cleanly.)</li>
+    <li>Installs a <b>systemd service</b> — ConusAI starts on boot, restarts on failure, logs to journald.</li>
   </ol>
 </div>
 

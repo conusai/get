@@ -228,6 +228,16 @@ case $platform in
     ;;
 esac
 
+# Best-effort: make signature verification possible. Non-interactive only —
+# never prompt for a sudo password before the wizard section owns the TTY.
+if ! command -v minisign >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    if [[ $(id -u) -eq 0 ]]; then
+        apt-get install -y -qq minisign >/dev/null 2>&1 || true
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n apt-get install -y -qq minisign >/dev/null 2>&1 || true
+    fi
+fi
+
 GITHUB=${GITHUB-"https://github.com"}
 
 github_repo="$GITHUB/conusai/get"
@@ -493,77 +503,199 @@ info_bold "  conusai --help"
 # ── Hand off to the interactive wizard (rustup pattern) ──────────────
 # stdin is the curl pipe → prompts must read the controlling TTY.
 # No TTY (CI/containers): NEVER hang — print the recipe and exit 0.
+
+SUDO=""
+[[ $(id -u) -ne 0 ]] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+
+# ── Preflight (warn, never block — the operator knows their machine) ──
+preflight() {
+    local mem_kb disk_kb
+    mem_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    if [[ $mem_kb -gt 0 && $mem_kb -lt 1900000 ]]; then
+        warning "Less than 2 GB RAM detected — ConusAI runs, but builds may struggle. 4 GB recommended."
+    fi
+    disk_kb=$(df -k / 2>/dev/null | awk 'NR==2{print $4}')
+    if [[ -n ${disk_kb:-} && $disk_kb -lt 10485760 ]]; then
+        warning "Less than 10 GB free on / — container images and builds need room."
+    fi
+    for p in 80 443; do
+        if command -v ss >/dev/null 2>&1 && ss -tln 2>/dev/null | grep -q ":$p "; then
+            warning "Port $p is already in use — another web server? ConusAI's proxy wants 80/443."
+        fi
+    done
+}
+
+docker_cmd=""
+resolve_docker() {
+    if command -v docker >/dev/null 2>&1; then
+        if docker info >/dev/null 2>&1; then docker_cmd="docker"; return 0; fi
+        if [[ -n $SUDO ]] && $SUDO docker info >/dev/null 2>&1 </dev/tty; then
+            docker_cmd="$SUDO docker"; return 0
+        fi
+        if [[ $(id -u) -eq 0 ]] && docker info >/dev/null 2>&1; then docker_cmd="docker"; return 0; fi
+    fi
+    return 1
+}
+
+ensure_docker() {
+    resolve_docker && { success "Docker is ready."; return 0; }
+    if ! command -v docker >/dev/null 2>&1; then
+        info "Docker not found — installing it (get.docker.com)…"
+        if [[ $(id -u) -eq 0 ]]; then
+            curl -fsSL https://get.docker.com | sh
+        elif [[ -n $SUDO ]]; then
+            curl -fsSL https://get.docker.com | $SUDO sh </dev/tty
+        else
+            error "Docker is required and cannot be installed automatically (no root, no sudo).
+Install it, then re-run:  curl -sSL https://get.conusai.com/install.sh | bash"
+        fi
+    fi
+    # Make the docker group effective for future logins/services even though
+    # this shell predates it; the service (below) picks it up at start.
+    if [[ $(id -u) -ne 0 && -n $SUDO ]]; then
+        $SUDO usermod -aG docker "$USER" 2>/dev/null || true
+    fi
+    resolve_docker || error "Docker is installed but not reachable. Check:  ${SUDO:+$SUDO }docker info"
+    success "Docker is ready."
+}
+
+provision_postgres() {
+    [[ -n "${CONUSAI_DATABASE_URL:-}" ]] && return 0
+    local PG_CONTAINER=conusai-postgres PG_IMAGE=timescale/timescaledb-ha:pg18 PG_PORT=5433
+    local conf_dir="$HOME/.conusai" PG_PASSWORD
+    mkdir -p "$conf_dir"; chmod 700 "$conf_dir"
+    if [[ -f "$conf_dir/pg.pass" ]]; then
+        PG_PASSWORD=$(cat "$conf_dir/pg.pass")
+    else
+        PG_PASSWORD=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+        (umask 077; printf '%s' "$PG_PASSWORD" > "$conf_dir/pg.pass")
+    fi
+    if $docker_cmd ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+        info "PostgreSQL container '$PG_CONTAINER' already running."
+    elif $docker_cmd ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+        info "Starting existing PostgreSQL container…"
+        $docker_cmd start "$PG_CONTAINER" >/dev/null
+    else
+        info "Provisioning PostgreSQL (TimescaleDB) container…"
+        $docker_cmd run -d --name "$PG_CONTAINER" --restart unless-stopped \
+            -e POSTGRES_USER=conusai -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=conusai \
+            -p "127.0.0.1:${PG_PORT}:5432" \
+            -v conusai-pg-data:/home/postgres/pgdata/data \
+            "$PG_IMAGE" >/dev/null
+    fi
+    # Readiness must mean what the app needs: TCP + password auth + the target
+    # database answering a real query — and STABLE. timescaledb-ha restarts
+    # postgres during first-boot init, so a single socket-level pg_isready can
+    # succeed inside the restart window ("0 bytes at EOF" for the next client).
+    # Require 3 consecutive TCP-authenticated queries, 2s apart.
+    info "Waiting for PostgreSQL to become ready…"
+    local ok_streak=0 tries=0
+    while [[ $ok_streak -lt 3 ]]; do
+        if $docker_cmd exec -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
+             psql -h 127.0.0.1 -p 5432 -U conusai -d conusai -tAc 'SELECT 1' >/dev/null 2>&1; then
+            ok_streak=$((ok_streak+1))
+        else
+            ok_streak=0
+        fi
+        tries=$((tries+1))
+        [[ $tries -gt 120 ]] && error "PostgreSQL did not become ready in time. Check: $docker_cmd logs $PG_CONTAINER"
+        sleep 2
+    done
+    success "PostgreSQL is ready (verified over TCP, 3× stable)."
+    export CONUSAI_DATABASE_URL="postgresql://conusai:${PG_PASSWORD}@localhost:${PG_PORT}/conusai?sslmode=disable"
+    (umask 077; printf 'CONUSAI_DATABASE_URL=%s\n' "$CONUSAI_DATABASE_URL" > "$conf_dir/conusai.env")
+    info "Database URL saved to ~/.conusai/conusai.env"
+}
+
+install_service() {
+    # Make ConusAI a real server: start on boot, restart on failure, survive
+    # logout. Skips gracefully when systemd is absent (containers, WSL1).
+    if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+        info "systemd not detected — start the server manually:"
+        info_bold "  set -a; source ~/.conusai/conusai.env; set +a; conusai serve"
+        return 0
+    fi
+    if [[ $(id -u) -ne 0 && -z $SUDO ]]; then
+        info "No root/sudo — start the server manually:"
+        info_bold "  set -a; source ~/.conusai/conusai.env; set +a; conusai serve"
+        return 0
+    fi
+    info "Installing systemd service…"
+    $SUDO install -m 755 "$exe" /usr/local/bin/conusai
+    local svc_user; svc_user=$(id -un)
+    local env_file="$HOME/.conusai/conusai.env"
+    # Pin the listeners once, in the env file the unit reads (0600 already).
+    grep -q '^CONUSAI_ADDRESS='          "$env_file" 2>/dev/null || echo "CONUSAI_ADDRESS=0.0.0.0:80"          >> "$env_file"
+    grep -q '^CONUSAI_TLS_ADDRESS='      "$env_file" 2>/dev/null || echo "CONUSAI_TLS_ADDRESS=0.0.0.0:443"      >> "$env_file"
+    grep -q '^CONUSAI_CONSOLE_ADDRESS='  "$env_file" 2>/dev/null || echo "CONUSAI_CONSOLE_ADDRESS=127.0.0.1:8081" >> "$env_file"
+    grep -q '^CONUSAI_DATA_DIR='         "$env_file" 2>/dev/null || echo "CONUSAI_DATA_DIR=$HOME/.conusai"        >> "$env_file"
+    $SUDO tee /etc/systemd/system/conusai.service >/dev/null <<UNIT
+[Unit]
+Description=ConusAI Cloud application server
+Documentation=https://get.conusai.com
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=$svc_user
+SupplementaryGroups=docker
+EnvironmentFile=$env_file
+# Wait until the database container actually answers — After=docker.service
+# only proves the daemon started, and migrations fail hard on a cold DB.
+ExecStartPre=/usr/bin/timeout 120 /bin/sh -c 'until docker exec conusai-postgres pg_isready -U conusai -q; do sleep 2; done'
+ExecStart=/usr/local/bin/conusai serve
+# Binding :80/:443 as a non-root user.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# The binary's graceful shutdown listens for SIGINT (not SIGTERM).
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=45
+TimeoutStartSec=300
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=conusai
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now conusai
+    info "Waiting for the server to come up…"
+    local i
+    for i in $(seq 1 45); do
+        if systemctl is-active --quiet conusai; then
+            success "ConusAI is running (systemd service 'conusai')."
+            local ip; ip=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+            echo
+            info_bold "  Dashboard:  http://${ip:-<server-ip>}/"
+            info_bold "  Logs:       journalctl -u conusai -f"
+            info_bold "  Manage:     systemctl status|restart|stop conusai"
+            return 0
+        fi
+        sleep 2
+    done
+    warning "Service installed but not active yet — inspect:  journalctl -u conusai -e"
+}
+
 if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] && [[ -e /dev/tty ]] \
    && ( : </dev/tty ) 2>/dev/null; then
     echo
-    # ── Auto-provision PostgreSQL when none is configured ────────────
-    # `conusai setup` requires a database. Fresh servers have none, so we
-    # start a local TimescaleDB container (same image the platform uses),
-    # bound to loopback only, with a generated password persisted 0600.
-    # ── Ensure Docker (install it if missing, sudo-fallback if group not active) ──
-    docker_cmd=""
-    resolve_docker() {
-        if command -v docker >/dev/null 2>&1; then
-            if docker info >/dev/null 2>&1; then docker_cmd="docker"; return 0; fi
-            if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1 </dev/tty; then
-                docker_cmd="sudo docker"; return 0
-            fi
-        fi
-        return 1
-    }
-    if [[ -z "${CONUSAI_DATABASE_URL:-}" ]]; then
-        if ! resolve_docker; then
-            if ! command -v docker >/dev/null 2>&1; then
-                info "Docker not found — installing it (get.docker.com)…"
-                if [[ $(id -u) -eq 0 ]]; then
-                    curl -fsSL https://get.docker.com | sh
-                elif command -v sudo >/dev/null 2>&1; then
-                    curl -fsSL https://get.docker.com | sudo sh </dev/tty
-                else
-                    error "Docker is required and cannot be installed automatically (no root, no sudo).
-Install it, then re-run:  curl -sSL https://get.conusai.com/install.sh | bash"
-                fi
-            fi
-            resolve_docker || error "Docker is installed but not reachable. Check:  sudo docker info"
-            success "Docker is ready."
-        fi
-        PG_CONTAINER=conusai-postgres
-        PG_IMAGE=timescale/timescaledb-ha:pg18
-        PG_PORT=5433
-        conf_dir="$HOME/.conusai"; mkdir -p "$conf_dir"; chmod 700 "$conf_dir"
-        if [[ -f "$conf_dir/pg.pass" ]]; then
-            PG_PASSWORD=$(cat "$conf_dir/pg.pass")
-        else
-            PG_PASSWORD=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
-            (umask 077; printf '%s' "$PG_PASSWORD" > "$conf_dir/pg.pass")
-        fi
-        if $docker_cmd ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
-            info "PostgreSQL container '$PG_CONTAINER' already running."
-        elif $docker_cmd ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
-            info "Starting existing PostgreSQL container…"
-            $docker_cmd start "$PG_CONTAINER" >/dev/null
-        else
-            info "Provisioning PostgreSQL (TimescaleDB) container…"
-            $docker_cmd run -d --name "$PG_CONTAINER" --restart unless-stopped \
-                -e POSTGRES_USER=conusai -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=conusai \
-                -p "127.0.0.1:${PG_PORT}:5432" \
-                -v conusai-pg-data:/home/postgres/pgdata/data \
-                "$PG_IMAGE" >/dev/null
-        fi
-        info "Waiting for PostgreSQL to become ready…"
-        pg_ok=false
-        for _ in $(seq 1 90); do
-            if $docker_cmd exec "$PG_CONTAINER" pg_isready -U conusai -d conusai >/dev/null 2>&1; then pg_ok=true; break; fi
-            sleep 2
-        done
-        [[ $pg_ok = true ]] || error "PostgreSQL did not become ready in time. Check: $docker_cmd logs $PG_CONTAINER"
-        success "PostgreSQL is ready."
-        export CONUSAI_DATABASE_URL="postgresql://conusai:${PG_PASSWORD}@localhost:${PG_PORT}/conusai?sslmode=disable"
-        (umask 077; printf 'CONUSAI_DATABASE_URL=%s\n' "$CONUSAI_DATABASE_URL" > "$conf_dir/conusai.env")
-        info "Database URL saved to ~/.conusai/conusai.env"
-    fi
+    preflight
+    ensure_docker
+    provision_postgres
     info "Launching interactive setup…"
-    exec "$exe" setup --interactive </dev/tty
+    if "$exe" setup --interactive </dev/tty; then
+        install_service
+    else
+        error "Setup did not complete. Re-run it any time:
+  set -a; source ~/.conusai/conusai.env; set +a; conusai setup --interactive"
+    fi
 else
     echo
     info "No TTY available — skipping interactive setup."
