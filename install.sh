@@ -500,13 +500,32 @@ if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] && [[ -e /dev/tty ]] \
     # `conusai setup` requires a database. Fresh servers have none, so we
     # start a local TimescaleDB container (same image the platform uses),
     # bound to loopback only, with a generated password persisted 0600.
+    # ── Ensure Docker (install it if missing, sudo-fallback if group not active) ──
+    docker_cmd=""
+    resolve_docker() {
+        if command -v docker >/dev/null 2>&1; then
+            if docker info >/dev/null 2>&1; then docker_cmd="docker"; return 0; fi
+            if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1 </dev/tty; then
+                docker_cmd="sudo docker"; return 0
+            fi
+        fi
+        return 1
+    }
     if [[ -z "${CONUSAI_DATABASE_URL:-}" ]]; then
-        if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-            info "Docker is required to auto-provision PostgreSQL (and to run apps)."
-            info_bold "  1) curl -fsSL https://get.docker.com | sh"
-            info_bold "  2) re-run:  curl -sSL https://get.conusai.com/install.sh | bash"
-            info "Or point at an existing database:  CONUSAI_DATABASE_URL=postgresql://… conusai setup --interactive"
-            exit 0
+        if ! resolve_docker; then
+            if ! command -v docker >/dev/null 2>&1; then
+                info "Docker not found — installing it (get.docker.com)…"
+                if [[ $(id -u) -eq 0 ]]; then
+                    curl -fsSL https://get.docker.com | sh
+                elif command -v sudo >/dev/null 2>&1; then
+                    curl -fsSL https://get.docker.com | sudo sh </dev/tty
+                else
+                    error "Docker is required and cannot be installed automatically (no root, no sudo).
+Install it, then re-run:  curl -sSL https://get.conusai.com/install.sh | bash"
+                fi
+            fi
+            resolve_docker || error "Docker is installed but not reachable. Check:  sudo docker info"
+            success "Docker is ready."
         fi
         PG_CONTAINER=conusai-postgres
         PG_IMAGE=timescale/timescaledb-ha:pg18
@@ -518,14 +537,14 @@ if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] && [[ -e /dev/tty ]] \
             PG_PASSWORD=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
             (umask 077; printf '%s' "$PG_PASSWORD" > "$conf_dir/pg.pass")
         fi
-        if docker ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+        if $docker_cmd ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
             info "PostgreSQL container '$PG_CONTAINER' already running."
-        elif docker ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+        elif $docker_cmd ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
             info "Starting existing PostgreSQL container…"
-            docker start "$PG_CONTAINER" >/dev/null
+            $docker_cmd start "$PG_CONTAINER" >/dev/null
         else
             info "Provisioning PostgreSQL (TimescaleDB) container…"
-            docker run -d --name "$PG_CONTAINER" --restart unless-stopped \
+            $docker_cmd run -d --name "$PG_CONTAINER" --restart unless-stopped \
                 -e POSTGRES_USER=conusai -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=conusai \
                 -p "127.0.0.1:${PG_PORT}:5432" \
                 -v conusai-pg-data:/home/postgres/pgdata/data \
@@ -534,10 +553,10 @@ if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] && [[ -e /dev/tty ]] \
         info "Waiting for PostgreSQL to become ready…"
         pg_ok=false
         for _ in $(seq 1 90); do
-            if docker exec "$PG_CONTAINER" pg_isready -U conusai -d conusai >/dev/null 2>&1; then pg_ok=true; break; fi
+            if $docker_cmd exec "$PG_CONTAINER" pg_isready -U conusai -d conusai >/dev/null 2>&1; then pg_ok=true; break; fi
             sleep 2
         done
-        [[ $pg_ok = true ]] || error "PostgreSQL did not become ready in time. Check: docker logs $PG_CONTAINER"
+        [[ $pg_ok = true ]] || error "PostgreSQL did not become ready in time. Check: $docker_cmd logs $PG_CONTAINER"
         success "PostgreSQL is ready."
         export CONUSAI_DATABASE_URL="postgresql://conusai:${PG_PASSWORD}@localhost:${PG_PORT}/conusai?sslmode=disable"
         (umask 077; printf 'CONUSAI_DATABASE_URL=%s\n' "$CONUSAI_DATABASE_URL" > "$conf_dir/conusai.env")
