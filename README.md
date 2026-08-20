@@ -14,8 +14,9 @@ curl -sSL https://get.conusai.com/install.sh | sh
   tiny anchor on any cheap VPS forwards traffic over WireGuard, with TLS
   terminating on your origin.
 
-The setup wizard (`conusai setup`) walks you through either mode.
-Non-interactive selection: `CONUSAI_MODE=a` or `CONUSAI_MODE=b`.
+The setup wizard (`conusai setup --interactive`) walks you through either
+mode. Headless Mode A: `conusai setup --auto`. Channels: append
+`--channel beta` or `--channel nightly` to the install command.
 
 Currently supported: **Linux x86_64**. Docker is required at runtime.
 

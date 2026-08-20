@@ -73,7 +73,7 @@
     <p>The classic. Install on any VPS or dedicated server with a public IP.
     ConusAI terminates TLS on :443 (automatic Let's Encrypt), and everything —
     dashboard, apps, databases — runs on that machine.</p>
-    <p style="margin-top:10px">Non-interactive: <code>CONUSAI_MODE=a</code></p>
+    <p style="margin-top:10px">Headless: <code>conusai setup --auto</code></p>
   </div>
   <div class="card">
     <span class="tag">MODE B</span>
@@ -82,7 +82,7 @@
     box, an on-prem machine. A tiny ConusAI <b>anchor</b> on any cheap VPS forwards
     traffic over WireGuard. TLS still terminates <em>on your origin</em>; real
     client IPs are preserved end-to-end. The setup wizard pairs both sides.</p>
-    <p style="margin-top:10px">Non-interactive: <code>CONUSAI_MODE=b</code></p>
+    <p style="margin-top:10px">Chosen in the wizard — it pairs the anchor for you.</p>
   </div>
 </div>
 
@@ -109,8 +109,7 @@
     <li>Downloads the latest signed release and <b>verifies its SHA-256 checksum</b>
         (and minisign signature when available — set <code style="color:var(--teal)">CONUSAI_INSTALL_REQUIRE_SIG=1</code> to make it mandatory).</li>
     <li>Installs <b>conusai</b> to <code style="color:var(--teal)">/usr/local/bin</code>.</li>
-    <li>Launches <b>conusai setup</b> — the wizard that asks <b>Mode A or Mode B</b>,
-        creates your admin account, and brings the platform up.</li>
+    <li>Launches <b>conusai setup --interactive</b> — the wizard that asks <b>Mode A or Mode B</b>, creates your admin account, and brings the platform up. (No TTY? It prints the recipe and exits cleanly.)</li>
   </ol>
 </div>
 
