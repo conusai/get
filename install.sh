@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# ConusAI installer script - inspired by Bun's installation approach
+# ConusAI Cloud installer — https://get.conusai.com
+#
+# POSIX guard: this is a bash script, but `curl … | sh` runs dash on
+# Debian/Ubuntu. Everything up to the `set` line below must be POSIX so we
+# can hand off to bash transparently instead of dying on `pipefail`.
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash -c 'curl -fsSL https://get.conusai.com/install.sh | bash'
+  fi
+  echo "error: this installer requires bash. Install it (e.g. apt-get install bash) and re-run." >&2
+  exit 1
+fi
 set -euo pipefail
 
 platform=$(uname -ms)

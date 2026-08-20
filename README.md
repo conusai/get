@@ -6,7 +6,7 @@ This repository hosts the public install script, landing page
 [Conus AI, UAB](https://www.conusai.com).
 
 ```bash
-curl -sSL https://get.conusai.com/install.sh | sh
+curl -sSL https://get.conusai.com/install.sh | bash
 ```
 
 - **Mode A** — public server: everything runs on one machine with a public IP.
