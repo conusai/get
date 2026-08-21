@@ -721,7 +721,14 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 UNIT
     $SUDO systemctl daemon-reload
-    $SUDO systemctl enable --now conusai
+    if systemctl is-active --quiet conusai; then
+        # Upgrade path: the unit is already running the previous binary;
+        # `enable --now` would leave it untouched.
+        info "Restarting the running service on the new binary…"
+        $SUDO systemctl restart conusai
+    else
+        $SUDO systemctl enable --now conusai
+    fi
     info "Waiting for the server to come up…"
     local i
     for i in $(seq 1 45); do
