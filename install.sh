@@ -647,7 +647,7 @@ provision_postgres() {
         "CREATE EXTENSION IF NOT EXISTS timescaledb WITH SCHEMA public;" \
         "CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit WITH SCHEMA public;" \
         "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;" \
-        "REASSIGN OWNED BY conusai TO conusai_app;" \
+        "ALTER DATABASE conusai OWNER TO conusai_app;" \
         | $docker_cmd exec -i -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
             psql -h 127.0.0.1 -p 5432 -U conusai -d conusai -q -v ON_ERROR_STOP=1 >/dev/null; then
         error "Failed to configure the application database role. Check: $docker_cmd logs $PG_CONTAINER"
