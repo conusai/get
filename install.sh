@@ -694,6 +694,9 @@ Type=exec
 User=$svc_user
 SupplementaryGroups=docker
 EnvironmentFile=$env_file
+# Relative paths (GeoLite2-City.mmdb, runtime scratch) resolve against the
+# data dir, not /.
+WorkingDirectory=$HOME/.conusai
 # Wait until the database container actually answers — After=docker.service
 # only proves the daemon started, and migrations fail hard on a cold DB.
 ExecStartPre=/usr/bin/timeout 120 /bin/sh -c 'until docker exec conusai-postgres pg_isready -U conusai -q; do sleep 2; done'
