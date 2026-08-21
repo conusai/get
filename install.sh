@@ -296,10 +296,10 @@ if [[ ${#positional[@]} -eq 0 ]]; then
     if [[ -z "$conusai_tag" ]]; then
         echo ""
         error "No releases found on channel '$channel'. Try a specific version:
-    curl -fsSL https://raw.githubusercontent.com/conusai/get/main/scripts/install.sh | bash -s -- v0.1.0
+    curl -fsSL https://get.conusai.com/install.sh | bash -s -- v0.1.0
 
 Or pick a different channel:
-    curl -fsSL https://raw.githubusercontent.com/conusai/get/main/scripts/install.sh | bash -s -- --channel beta
+    curl -fsSL https://get.conusai.com/install.sh | bash -s -- --channel beta
 
 Available versions: https://github.com/conusai/get/releases"
     fi
@@ -746,15 +746,20 @@ UNIT
     warning "Service installed but not active yet — inspect:  journalctl -u conusai -e"
 }
 
-if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] && [[ -e /dev/tty ]] \
-   && ( : </dev/tty ) 2>/dev/null; then
+# A TTY is needed for prompts; an env-driven run (CONUSAI_SETUP_MODE=… or
+# CONUSAI_SETUP_EXISTING=…) never prompts, so it may run without one
+# (cloud-init, CI, ssh without -t).
+setup_stdin=/dev/null
+if [[ -e /dev/tty ]] && ( : </dev/tty ) 2>/dev/null; then setup_stdin=/dev/tty; fi
+if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] \
+   && { [[ $setup_stdin == /dev/tty ]] || [[ -n ${CONUSAI_SETUP_MODE:-}${CONUSAI_SETUP_EXISTING:-} ]]; }; then
     echo
     preflight
     ensure_docker
     provision_postgres
     grant_net_caps "$exe"
-    info "Launching interactive setup…"
-    if "$exe" setup --interactive </dev/tty; then
+    info "Launching setup…"
+    if "$exe" setup --interactive <"$setup_stdin"; then
         install_service
     else
         error "Setup did not complete. Re-run it any time:
@@ -764,8 +769,9 @@ else
     echo
     info "No TTY available — skipping interactive setup."
     info_bold "  Run later:   conusai setup --interactive"
-    info_bold "  Or headless: conusai setup --help   (env-driven --auto flags)"
-    info_bold "  Optional outbound email (headless): CONUSAI_SMTP_PRESET=gmail|ses|scaleway|custom"
+    info_bold "  Or headless: re-run with CONUSAI_SETUP_MODE=a|b and the wizard's env vars set"
+    info_bold "               (ADMIN_EMAIL, ADMIN_PASSWORD, MAIN_DOMAIN, LETSENCRYPT_EMAIL, CONUSAI_SETUP_YES=1)"
+    info_bold "  Optional outbound email, same run: CONUSAI_SMTP_PRESET=gmail|ses|scaleway|custom"
     info_bold "      CONUSAI_SMTP_HOST CONUSAI_SMTP_PORT CONUSAI_SMTP_USERNAME CONUSAI_SMTP_PASSWORD"
     info_bold "      CONUSAI_SMTP_ENCRYPTION=starttls|tls|none CONUSAI_SMTP_FROM_ADDRESS CONUSAI_SMTP_SES_REGION"
 fi
