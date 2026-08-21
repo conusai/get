@@ -758,4 +758,7 @@ else
     info "No TTY available — skipping interactive setup."
     info_bold "  Run later:   conusai setup --interactive"
     info_bold "  Or headless: conusai setup --help   (env-driven --auto flags)"
+    info_bold "  Optional outbound email (headless): CONUSAI_SMTP_PRESET=gmail|ses|scaleway|custom"
+    info_bold "      CONUSAI_SMTP_HOST CONUSAI_SMTP_PORT CONUSAI_SMTP_USERNAME CONUSAI_SMTP_PASSWORD"
+    info_bold "      CONUSAI_SMTP_ENCRYPTION=starttls|tls|none CONUSAI_SMTP_FROM_ADDRESS CONUSAI_SMTP_SES_REGION"
 fi
