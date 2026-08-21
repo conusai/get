@@ -367,9 +367,11 @@ if [[ $(id -u) -eq 0 ]]; then
     info "Also installed to /usr/local/bin/conusai (system PATH)."
 fi
 
+already_on_path=false
 if command -v conusai >/dev/null; then
-    echo "Run 'conusai --help' to get started"
-    exit
+    # A previous install already put conusai on PATH — skip the shell-config
+    # section, but keep going: provisioning and setup below must still run.
+    already_on_path=true
 fi
 
 refresh_command=''
@@ -383,6 +385,7 @@ fi
 
 echo
 
+if [[ $already_on_path = true ]]; then :; else
 case $(basename "$SHELL") in
 fish)
     commands=(
@@ -497,6 +500,7 @@ bash)
     info_bold "  export PATH=\"$bin_env:\$PATH\""
     ;;
 esac
+fi
 
 echo
 info "To get started, run:"
@@ -514,6 +518,25 @@ info_bold "  conusai --help"
 
 SUDO=""
 [[ $(id -u) -ne 0 ]] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+
+# Mode B pairing creates a WireGuard interface locally, and the server binds
+# :80/:443 — both privileged operations. File capabilities grant exactly those
+# two to the binary, so setup and the service run as a regular user (no
+# setuid, no running everything as root). Must be re-applied after every copy:
+# `install` writes a new inode, which drops file capabilities.
+grant_net_caps() {
+    local target=$1
+    [[ $(id -u) -eq 0 ]] && return 0
+    if ! command -v setcap >/dev/null 2>&1 && [[ -n $SUDO ]] && command -v apt-get >/dev/null 2>&1; then
+        $SUDO apt-get install -y -qq libcap2-bin >/dev/null 2>&1 || true
+    fi
+    if command -v setcap >/dev/null 2>&1 && [[ -n $SUDO ]]; then
+        $SUDO setcap 'cap_net_admin,cap_net_bind_service+ep' "$target" 2>/dev/null ||
+            warning "Could not grant network capabilities to $target — Mode B setup will need root:  sudo -E conusai setup --interactive"
+    else
+        warning "setcap is unavailable — Mode B setup will need root:  sudo -E conusai setup --interactive"
+    fi
+}
 
 # ── Preflight (warn, never block — the operator knows their machine) ──
 preflight() {
@@ -610,7 +633,26 @@ provision_postgres() {
         sleep 2
     done
     success "PostgreSQL is ready (verified over TCP, 3× stable)."
-    export CONUSAI_DATABASE_URL="postgresql://conusai:${PG_PASSWORD}@localhost:${PG_PORT}/conusai?sslmode=disable"
+    # The container's POSTGRES_USER is a superuser, and PostgreSQL exempts
+    # superusers from row-level security unconditionally — connecting the app
+    # as that role would make tenant isolation inert (the server refuses to
+    # stay quiet about it). So the app connects as 'conusai_app': LOGIN,
+    # NOSUPERUSER, NOBYPASSRLS, owner of everything in the database. The
+    # extensions the migrations expect are created here once, with superuser.
+    info "Configuring least-privilege application role…"
+    if ! printf '%s\n' \
+        "SET client_min_messages = error;" \
+        "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'conusai_app') THEN CREATE ROLE conusai_app LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE; END IF; END \$\$;" \
+        "ALTER ROLE conusai_app PASSWORD '${PG_PASSWORD}';" \
+        "CREATE EXTENSION IF NOT EXISTS timescaledb WITH SCHEMA public;" \
+        "CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit WITH SCHEMA public;" \
+        "CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;" \
+        "REASSIGN OWNED BY conusai TO conusai_app;" \
+        | $docker_cmd exec -i -e PGPASSWORD="$PG_PASSWORD" "$PG_CONTAINER" \
+            psql -h 127.0.0.1 -p 5432 -U conusai -d conusai -q -v ON_ERROR_STOP=1 >/dev/null; then
+        error "Failed to configure the application database role. Check: $docker_cmd logs $PG_CONTAINER"
+    fi
+    export CONUSAI_DATABASE_URL="postgresql://conusai_app:${PG_PASSWORD}@localhost:${PG_PORT}/conusai?sslmode=disable"
     (umask 077; printf 'CONUSAI_DATABASE_URL=%s\n' "$CONUSAI_DATABASE_URL" > "$conf_dir/conusai.env")
     info "Database URL saved to ~/.conusai/conusai.env"
 }
@@ -630,6 +672,7 @@ install_service() {
     fi
     info "Installing systemd service…"
     $SUDO install -m 755 "$exe" /usr/local/bin/conusai
+    grant_net_caps /usr/local/bin/conusai
     local svc_user; svc_user=$(id -un)
     local env_file="$HOME/.conusai/conusai.env"
     # Pin the listeners once, in the env file the unit reads (0600 already).
@@ -655,8 +698,10 @@ EnvironmentFile=$env_file
 # only proves the daemon started, and migrations fail hard on a cold DB.
 ExecStartPre=/usr/bin/timeout 120 /bin/sh -c 'until docker exec conusai-postgres pg_isready -U conusai -q; do sleep 2; done'
 ExecStart=/usr/local/bin/conusai serve
-# Binding :80/:443 as a non-root user.
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+# Binding :80/:443 and managing the Mode B WireGuard tunnel as a non-root
+# user. (The binary carries matching file capabilities; ambient is the
+# belt-and-braces for a binary replaced without setcap.)
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
 # The binary's graceful shutdown listens for SIGINT (not SIGTERM).
 KillSignal=SIGINT
 KillMode=mixed
@@ -697,6 +742,7 @@ if [[ "${CONUSAI_INSTALL_NO_WIZARD:-}" != "1" ]] && [[ -e /dev/tty ]] \
     preflight
     ensure_docker
     provision_postgres
+    grant_net_caps "$exe"
     info "Launching interactive setup…"
     if "$exe" setup --interactive </dev/tty; then
         install_service
