@@ -1,0 +1,18 @@
+{
+  "name": "conusai-release-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted release host for ConusAI Cloud — serves install.sh, channel pointers and signed release artifacts.",
+  "type": "module",
+  "module": "server.ts",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "CONUSAI_DATA_DIR=./.data CONUSAI_PUBLISH_TOKEN=dev-token-not-for-production-000000 bun run --watch server.ts"
+  },
+  "comment": "No dependencies, deliberately. This process is the last hop before a curl|bash that runs as root; every package here is a package that could replace the bytes it serves.",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^7.0.2"
+  }
+}
